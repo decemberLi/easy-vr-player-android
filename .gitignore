@@ -1,0 +1,22 @@
+# Android Studio
+.idea/
+.gradle/
+.kotlin/
+build/
+local.properties
+*.iml
+.DS_Store
+captures/
+
+# Local agent/editor state
+.claude/settings.local.json
+
+# Native
+.cxx/
+
+# Keystore
+*.jks
+*.keystore
+
+# Gradle wrapper jars are committed by convention; if you don't want them, uncomment:
+# gradle/wrapper/gradle-wrapper.jar

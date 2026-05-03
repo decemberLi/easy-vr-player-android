@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VR Player</string>
+    <string name="home_pick_local">选择视频文件</string>
+    <string name="home_115">115 网盘</string>
+    <string name="home_settings">设置</string>
+    <string name="settings_clear_login">清除 115 登录</string>
+    <string name="login_required_title">需要登录</string>
+    <string name="login_required_message">检测到您尚未登录 115 网盘，点击确定前往登录页面。</string>
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="loading">加载中…</string>
+    <string name="quality_chooser">选择视频质量</string>
+    <string name="quality_original">原画</string>
+    <string name="play">播放</string>
+    <string name="pause">暂停</string>
+</resources>
