@@ -28,6 +28,7 @@ public:
     void Destroy();
 
     GLuint TextureId() const { return texId_; }
+    const float* TransformMatrix() const { return transform_; }
 
     /** Save a global ref to the SurfaceTexture object provided by JVM. */
     void SetSurfaceTexture(JNIEnv* env, jobject surfaceTexture);
@@ -52,6 +53,13 @@ private:
     jmethodID midAttach_ = nullptr;
     jmethodID midDetach_ = nullptr;
     jmethodID midUpdate_ = nullptr;
+    jmethodID midTransform_ = nullptr;
+    float transform_[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
 
     void CacheMethodIds(JNIEnv* env);
 };

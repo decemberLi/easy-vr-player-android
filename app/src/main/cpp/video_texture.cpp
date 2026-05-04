@@ -25,13 +25,14 @@ void VideoTexture::Destroy() {
 }
 
 void VideoTexture::CacheMethodIds(JNIEnv* env) {
-    if (midAttach_ && midUpdate_ && midDetach_) return;
+    if (midAttach_ && midUpdate_ && midDetach_ && midTransform_) return;
     jclass cls = env->GetObjectClass(surfaceTextureGlobal_);
     midAttach_ = env->GetMethodID(cls, "attachToGLContext", "(I)V");
     midDetach_ = env->GetMethodID(cls, "detachFromGLContext", "()V");
     midUpdate_ = env->GetMethodID(cls, "updateTexImage", "()V");
+    midTransform_ = env->GetMethodID(cls, "getTransformMatrix", "([F)V");
     env->DeleteLocalRef(cls);
-    if (!midAttach_ || !midUpdate_) {
+    if (!midAttach_ || !midUpdate_ || !midTransform_) {
         LOGE("VideoTexture failed to look up SurfaceTexture method ids");
     }
 }
@@ -46,7 +47,7 @@ void VideoTexture::SetSurfaceTexture(JNIEnv* env, jobject surfaceTexture) {
         env->DeleteGlobalRef(surfaceTextureGlobal_);
     }
     surfaceTextureGlobal_ = surfaceTexture ? env->NewGlobalRef(surfaceTexture) : nullptr;
-    midAttach_ = midDetach_ = midUpdate_ = nullptr;
+    midAttach_ = midDetach_ = midUpdate_ = midTransform_ = nullptr;
     attached_ = false;
     if (surfaceTextureGlobal_) CacheMethodIds(env);
 }
@@ -59,7 +60,7 @@ void VideoTexture::ClearSurfaceTexture(JNIEnv* env) {
     }
     env->DeleteGlobalRef(surfaceTextureGlobal_);
     surfaceTextureGlobal_ = nullptr;
-    midAttach_ = midDetach_ = midUpdate_ = nullptr;
+    midAttach_ = midDetach_ = midUpdate_ = midTransform_ = nullptr;
     attached_ = false;
 }
 
@@ -96,6 +97,28 @@ bool VideoTexture::UpdateIfNeeded(JNIEnv* env) {
         env->ExceptionDescribe();
         env->ExceptionClear();
         return false;
+    }
+    if (midTransform_) {
+        jfloatArray matrix = env->NewFloatArray(16);
+        if (!matrix) {
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return true;
+        }
+        env->CallVoidMethod(surfaceTextureGlobal_, midTransform_, matrix);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        } else {
+            env->GetFloatArrayRegion(matrix, 0, 16, transform_);
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+        }
+        env->DeleteLocalRef(matrix);
     }
     return true;
 }

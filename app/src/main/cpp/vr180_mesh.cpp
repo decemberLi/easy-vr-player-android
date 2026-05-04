@@ -123,9 +123,9 @@ void VrSphereMesh::Draw() const {
 }
 
 gl::Mat4 VrSphereMesh::ModelTransform() const {
-    // iOS rotates the mesh -π/2 around Y to align the hemisphere with the
-    // forward (-Z) direction. We do the same here.
-    return gl::MakeRotationY(-kPi * 0.5f);
+    // Mesh generation centers the VR180 hemisphere on -X. OpenXR's forward
+    // direction is -Z, so rotate it into the viewer's front hemisphere.
+    return gl::MakeRotationY(kPi * 0.5f);
 }
 
 }  // namespace vrp

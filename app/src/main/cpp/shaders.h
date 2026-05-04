@@ -36,6 +36,7 @@ in highp vec2 v_uv;
 
 uniform samplerExternalOES u_videoTex;
 uniform int u_stereoMode;
+uniform highp mat4 u_texTransform;
 
 out vec4 fragColor;
 
@@ -45,7 +46,8 @@ void main() {
         // SBS layout: left half = left eye, right half = right eye.
         uv.x = uv.x * 0.5 + (gl_ViewID_OVR == 0u ? 0.0 : 0.5);
     }
-    fragColor = texture(u_videoTex, uv);
+    highp vec2 videoUv = (u_texTransform * vec4(uv, 0.0, 1.0)).xy;
+    fragColor = texture(u_videoTex, videoUv);
 }
 )glsl";
 

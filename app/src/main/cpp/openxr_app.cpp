@@ -657,6 +657,7 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
             GLint locModel = glGetUniformLocation(videoProgram_, "u_model");
             GLint locTex   = glGetUniformLocation(videoProgram_, "u_videoTex");
             GLint locStereo= glGetUniformLocation(videoProgram_, "u_stereoMode");
+            GLint locTexTransform = glGetUniformLocation(videoProgram_, "u_texTransform");
             float matsView[32], matsProj[32];
             std::memcpy(matsView,      viewMat[0].m, sizeof(viewMat[0].m));
             std::memcpy(matsView + 16, viewMat[1].m, sizeof(viewMat[1].m));
@@ -667,6 +668,7 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
             gl::Mat4 model = mesh_.ModelTransform();
             glUniformMatrix4fv(locModel, 1, GL_FALSE, model.m);
             glUniform1i(locStereo, stereoMode_.load());
+            glUniformMatrix4fv(locTexTransform, 1, GL_FALSE, videoTex_.TransformMatrix());
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_EXTERNAL_OES, videoTex_.TextureId());
