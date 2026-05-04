@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,6 +50,7 @@ fun HomeScreen(
     val ctx = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var loginDialogVisible by remember { mutableStateOf(false) }
+    var auth115InProgress by remember { mutableStateOf(false) }
 
     val pickLocal = SafVideoPicker.rememberLauncher { uri ->
         if (uri != null) {
@@ -57,12 +59,16 @@ fun HomeScreen(
     }
 
     val authLauncher = rememberLauncherForActivityResult(AuthWebViewActivity.Contract()) { result ->
-        if (result == null) return@rememberLauncherForActivityResult
+        if (result == null) {
+            auth115InProgress = false
+            return@rememberLauncherForActivityResult
+        }
         val (code, state) = result
         coroutineScope.launch {
             runCatching { TokenManager115.exchangeCodeForToken(code, state) }
                 .onSuccess { onOpen115() }
                 .onFailure { it.printStackTrace() }
+            auth115InProgress = false
         }
     }
 
@@ -78,8 +84,17 @@ fun HomeScreen(
 
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             HomeTile(label = "选择视频文件", icon = Icons.Filled.FolderOpen) { pickLocal() }
-            HomeTile(label = "115 网盘", icon = Icons.Filled.Cloud) {
-                if (TokenManager115.isLoggedIn) onOpen115() else loginDialogVisible = true
+            HomeTile(
+                label = "115 网盘",
+                icon = Icons.Filled.Cloud,
+                loading = auth115InProgress,
+            ) {
+                if (TokenManager115.isLoggedIn) {
+                    onOpen115()
+                } else {
+                    auth115InProgress = true
+                    loginDialogVisible = true
+                }
             }
             HomeTile(label = "设置", icon = Icons.Filled.Settings) { onOpenSettings() }
         }
@@ -87,7 +102,10 @@ fun HomeScreen(
 
     if (loginDialogVisible) {
         AlertDialog(
-            onDismissRequest = { loginDialogVisible = false },
+            onDismissRequest = {
+                loginDialogVisible = false
+                auth115InProgress = false
+            },
             title = { Text("需要登录") },
             text = { Text("检测到您尚未登录 115 网盘，点击确定前往登录页面。") },
             confirmButton = {
@@ -97,18 +115,26 @@ fun HomeScreen(
                 }) { Text("确定") }
             },
             dismissButton = {
-                TextButton(onClick = { loginDialogVisible = false }) { Text("取消") }
+                TextButton(onClick = {
+                    loginDialogVisible = false
+                    auth115InProgress = false
+                }) { Text("取消") }
             },
         )
     }
 }
 
 @Composable
-private fun HomeTile(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun HomeTile(
+    label: String,
+    icon: ImageVector,
+    loading: Boolean = false,
+    onClick: () -> Unit,
+) {
     Card(
         modifier = Modifier
             .size(180.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = !loading, onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
         Box(
@@ -118,7 +144,13 @@ private fun HomeTile(label: String, icon: ImageVector, onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(icon, contentDescription = label, modifier = Modifier.size(72.dp))
+                Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                    if (loading) {
+                        CircularProgressIndicator(modifier = Modifier.size(56.dp))
+                    } else {
+                        Icon(icon, contentDescription = label, modifier = Modifier.size(72.dp))
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(label, style = MaterialTheme.typography.titleMedium)
             }
