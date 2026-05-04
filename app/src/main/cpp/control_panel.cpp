@@ -71,6 +71,8 @@ void ControlPanel::Draw(GLuint program, const gl::Mat4& view0, const gl::Mat4& v
     GLint locLoading  = glGetUniformLocation(program, "u_isLoading");
     GLint locPointerU = glGetUniformLocation(program, "u_pointerU");
     GLint locPointerV = glGetUniformLocation(program, "u_pointerV");
+    GLint locCurrentSeconds = glGetUniformLocation(program, "u_currentSeconds");
+    GLint locDurationSeconds = glGetUniformLocation(program, "u_durationSeconds");
 
     float views[32];
     std::memcpy(views,      view0.m, sizeof(view0.m));
@@ -90,6 +92,8 @@ void ControlPanel::Draw(GLuint program, const gl::Mat4& view0, const gl::Mat4& v
     glUniform1i(locLoading,  isLoading_ ? 1 : 0);
     glUniform1f(locPointerU, hover.u);
     glUniform1f(locPointerV, hover.v);
+    glUniform1i(locCurrentSeconds, int(currentMs_ / 1000));
+    glUniform1i(locDurationSeconds, int(durationMs_ / 1000));
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -128,9 +132,9 @@ ControlPanel::HitResult ControlPanel::HitTestRay(float ox, float oy, float oz,
         r.region = Region_PlayPause;
     } else if (r.u < 0.45f) {
         r.region = Region_Plus15;
-    } else if (r.u >= 0.50f) {
+    } else if (r.u >= 0.45f) {
         r.region = Region_Scrubber;
-        r.scrubFraction = (r.u - 0.50f) / 0.50f;
+        r.scrubFraction = (r.u - 0.45f) / 0.55f;
     }
     return r;
 }

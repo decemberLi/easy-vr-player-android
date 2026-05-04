@@ -11,7 +11,7 @@ namespace vrp {
  *   x [0.00..0.15] = -15s
  *   x [0.15..0.30] = play/pause
  *   x [0.30..0.45] = +15s
- *   x [0.50..1.00] = scrubber
+ *   x [0.45..1.00] = scrubber
  */
 class ControlPanel {
 public:
@@ -55,6 +55,10 @@ public:
     void SetIsPlaying(bool playing) { isPlaying_ = playing; }
     void SetIsLoading(bool loading) { isLoading_ = loading; }
     void SetProgress(float fraction) { progress_ = fraction; }
+    void SetTimes(long long currentMs, long long durationMs) {
+        currentMs_ = currentMs;
+        durationMs_ = durationMs;
+    }
 
 private:
     GLuint vao_ = 0;
@@ -70,6 +74,8 @@ private:
     bool  isPlaying_ = false;
     bool  isLoading_ = false;
     float progress_ = 0.0f;
+    long long currentMs_ = 0;
+    long long durationMs_ = 0;
 };
 
 }  // namespace vrp

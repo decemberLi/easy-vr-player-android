@@ -855,6 +855,7 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
         panel_.SetIsPlaying(isPlaying_.load());
         panel_.SetIsLoading(isLoading_.load());
         panel_.SetProgress(progress);
+        panel_.SetTimes(cur, dur);
 
         // Quest Touch controllers are the only control source. Head gaze is
         // intentionally not used, so no fixed eye-centered cursor can activate UI.
