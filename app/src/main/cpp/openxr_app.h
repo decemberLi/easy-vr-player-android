@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <jni.h>
 #include <mutex>
 #include <thread>
@@ -67,6 +68,7 @@ private:
     void DispatchPlayPause(JNIEnv* env);
     void DispatchSeekRelative(JNIEnv* env, long long deltaMs);
     void DispatchSeekFraction(JNIEnv* env, float fraction);
+    void DispatchExit(JNIEnv* env);
     bool CreatePointerResources();
     void DestroyPointerResources();
 
@@ -90,6 +92,7 @@ private:
     jmethodID midPlayPause_ = nullptr;
     jmethodID midSeekRel_ = nullptr;
     jmethodID midSeekFrac_ = nullptr;
+    jmethodID midExit_ = nullptr;
 
     // Render-thread sync.
     std::thread renderThread_;
@@ -128,6 +131,11 @@ private:
     XrActionSet actionSet_ = XR_NULL_HANDLE;
     XrAction triggerAction_ = XR_NULL_HANDLE;
     XrAction aimPoseAction_ = XR_NULL_HANDLE;
+    XrAction buttonAAction_ = XR_NULL_HANDLE;
+    XrAction buttonBAction_ = XR_NULL_HANDLE;
+    XrAction thumbstickXAction_ = XR_NULL_HANDLE;
+    XrAction thumbstickYAction_ = XR_NULL_HANDLE;
+    XrAction thumbstickClickAction_ = XR_NULL_HANDLE;
     XrPath subactionPaths_[2] = {};
     XrSessionState sessionState_ = XR_SESSION_STATE_UNKNOWN;
     XrViewConfigurationView viewConfigs_[2] = {};
@@ -145,6 +153,14 @@ private:
 
     // UI hover/trigger latch
     bool prevTrigger_[2] = { false, false };
+    bool prevButtonA_ = false;
+    bool prevButtonB_ = false;
+    bool prevThumbstickClick_[2] = { false, false };
+    int prevThumbstickXDir_[2] = { 0, 0 };
+    int prevThumbstickYDir_[2] = { 0, 0 };
+    bool panelVisible_ = true;
+    std::chrono::steady_clock::time_point panelLastInteractionTime_{};
+    std::chrono::steady_clock::time_point lastThumbstickSeekTime_{};
     ControlPanel::HitResult hover_{};
 };
 

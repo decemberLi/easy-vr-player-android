@@ -34,6 +34,9 @@ namespace vrp {
 namespace {
 
 PFN_xrInitializeLoaderKHR pfnXrInitializeLoaderKHR = nullptr;
+constexpr auto kPanelAutoHideDelay = std::chrono::seconds(3);
+constexpr float kThumbstickPressThreshold = 0.65f;
+constexpr double kThumbstickSeekSpeedMsPerSecond = 20000.0;
 
 bool EnsureLoaderInitialized(JavaVM* jvm, jobject appContext) {
     if (pfnXrInitializeLoaderKHR) return true;
@@ -85,6 +88,12 @@ bool Normalize3(float& x, float& y, float& z) {
     y /= len;
     z /= len;
     return true;
+}
+
+int AxisDirection(float value) {
+    if (value >= kThumbstickPressThreshold) return 1;
+    if (value <= -kThumbstickPressThreshold) return -1;
+    return 0;
 }
 
 void RotateVectorByQuat(const XrQuaternionf& q,
@@ -179,7 +188,7 @@ void OpenXRApp::Destroy() {
         if (activityGlobal_) { env->DeleteGlobalRef(activityGlobal_); activityGlobal_ = nullptr; }
         if (appContextGlobal_) { env->DeleteGlobalRef(appContextGlobal_); appContextGlobal_ = nullptr; }
     }
-    midPlayPause_ = midSeekRel_ = midSeekFrac_ = nullptr;
+    midPlayPause_ = midSeekRel_ = midSeekFrac_ = midExit_ = nullptr;
     textureReady_ = false;
     initFailed_ = false;
 }
@@ -199,6 +208,7 @@ void OpenXRApp::SetCallback(JNIEnv* env, jobject callback) {
         midPlayPause_ = env->GetMethodID(cls, "onPlayPause", "()V");
         midSeekRel_   = env->GetMethodID(cls, "onSeekRelative", "(J)V");
         midSeekFrac_  = env->GetMethodID(cls, "onSeekFraction", "(F)V");
+        midExit_      = env->GetMethodID(cls, "onExit", "()V");
         env->DeleteLocalRef(cls);
     }
 }
@@ -500,18 +510,82 @@ bool OpenXRApp::InitGlResources() {
         aci.subactionPaths = subactionPaths_;
         XR_OK(xrCreateAction(actionSet_, &aci, &aimPoseAction_));
     }
+    {
+        XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+        std::strcpy(aci.actionName, "button_a");
+        std::strcpy(aci.localizedActionName, "A");
+        aci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        aci.countSubactionPaths = 1;
+        aci.subactionPaths = &subactionPaths_[1];
+        XR_OK(xrCreateAction(actionSet_, &aci, &buttonAAction_));
+    }
+    {
+        XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+        std::strcpy(aci.actionName, "button_b");
+        std::strcpy(aci.localizedActionName, "B");
+        aci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        aci.countSubactionPaths = 1;
+        aci.subactionPaths = &subactionPaths_[1];
+        XR_OK(xrCreateAction(actionSet_, &aci, &buttonBAction_));
+    }
+    {
+        XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+        std::strcpy(aci.actionName, "thumbstick_x");
+        std::strcpy(aci.localizedActionName, "Thumbstick X");
+        aci.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+        aci.countSubactionPaths = 2;
+        aci.subactionPaths = subactionPaths_;
+        XR_OK(xrCreateAction(actionSet_, &aci, &thumbstickXAction_));
+    }
+    {
+        XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+        std::strcpy(aci.actionName, "thumbstick_y");
+        std::strcpy(aci.localizedActionName, "Thumbstick Y");
+        aci.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+        aci.countSubactionPaths = 2;
+        aci.subactionPaths = subactionPaths_;
+        XR_OK(xrCreateAction(actionSet_, &aci, &thumbstickYAction_));
+    }
+    {
+        XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+        std::strcpy(aci.actionName, "thumbstick_click");
+        std::strcpy(aci.localizedActionName, "Thumbstick Click");
+        aci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        aci.countSubactionPaths = 2;
+        aci.subactionPaths = subactionPaths_;
+        XR_OK(xrCreateAction(actionSet_, &aci, &thumbstickClickAction_));
+    }
 
     XrPath leftTrig, rightTrig, leftAim, rightAim;
+    XrPath rightA, rightB;
+    XrPath leftThumbX, rightThumbX, leftThumbY, rightThumbY;
+    XrPath leftThumbClick, rightThumbClick;
     XR_OK(xrStringToPath(instance_, "/user/hand/left/input/trigger/value", &leftTrig));
     XR_OK(xrStringToPath(instance_, "/user/hand/right/input/trigger/value", &rightTrig));
     XR_OK(xrStringToPath(instance_, "/user/hand/left/input/aim/pose", &leftAim));
     XR_OK(xrStringToPath(instance_, "/user/hand/right/input/aim/pose", &rightAim));
+    XR_OK(xrStringToPath(instance_, "/user/hand/right/input/a/click", &rightA));
+    XR_OK(xrStringToPath(instance_, "/user/hand/right/input/b/click", &rightB));
+    XR_OK(xrStringToPath(instance_, "/user/hand/left/input/thumbstick/x", &leftThumbX));
+    XR_OK(xrStringToPath(instance_, "/user/hand/right/input/thumbstick/x", &rightThumbX));
+    XR_OK(xrStringToPath(instance_, "/user/hand/left/input/thumbstick/y", &leftThumbY));
+    XR_OK(xrStringToPath(instance_, "/user/hand/right/input/thumbstick/y", &rightThumbY));
+    XR_OK(xrStringToPath(instance_, "/user/hand/left/input/thumbstick/click", &leftThumbClick));
+    XR_OK(xrStringToPath(instance_, "/user/hand/right/input/thumbstick/click", &rightThumbClick));
 
-    std::array<XrActionSuggestedBinding, 4> suggested = {{
+    std::array<XrActionSuggestedBinding, 12> suggested = {{
         { triggerAction_, leftTrig },
         { triggerAction_, rightTrig },
         { aimPoseAction_, leftAim },
         { aimPoseAction_, rightAim },
+        { buttonAAction_, rightA },
+        { buttonBAction_, rightB },
+        { thumbstickXAction_, leftThumbX },
+        { thumbstickXAction_, rightThumbX },
+        { thumbstickYAction_, leftThumbY },
+        { thumbstickYAction_, rightThumbY },
+        { thumbstickClickAction_, leftThumbClick },
+        { thumbstickClickAction_, rightThumbClick },
     }};
     auto suggestBindings = [&](const char* profilePath) -> bool {
         XrPath profile = XR_NULL_PATH;
@@ -565,6 +639,9 @@ bool OpenXRApp::InitGlResources() {
     mesh_.Create(2.0f, 180.0f, 180.0f);
     panel_.Create();
     if (!CreatePointerResources()) return false;
+    panelVisible_ = true;
+    panelLastInteractionTime_ = std::chrono::steady_clock::now();
+    lastThumbstickSeekTime_ = panelLastInteractionTime_;
     videoTex_.CreateTexture();
     fbo_.Create(swapchainWidth_, swapchainHeight_);
     textureReady_ = true;
@@ -794,25 +871,138 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
             }
         }
 
-        // Trigger latching.
+        const auto now = std::chrono::steady_clock::now();
+        bool inputStarted = false;
+        bool consumedForWake = false;
+
+        XrActionStateGetInfo buttonGi{ XR_TYPE_ACTION_STATE_GET_INFO };
+        buttonGi.subactionPath = subactionPaths_[1];
+
+        buttonGi.action = buttonAAction_;
+        XrActionStateBoolean buttonAState{ XR_TYPE_ACTION_STATE_BOOLEAN };
+        XrResult buttonAResult = xrGetActionStateBoolean(session_, &buttonGi, &buttonAState);
+        bool buttonAPressed = XR_SUCCEEDED(buttonAResult) && buttonAState.isActive && buttonAState.currentState;
+        bool buttonAJustPressed = buttonAPressed && !prevButtonA_;
+        prevButtonA_ = buttonAPressed;
+        inputStarted |= buttonAJustPressed;
+
+        buttonGi.action = buttonBAction_;
+        XrActionStateBoolean buttonBState{ XR_TYPE_ACTION_STATE_BOOLEAN };
+        XrResult buttonBResult = xrGetActionStateBoolean(session_, &buttonGi, &buttonBState);
+        bool buttonBPressed = XR_SUCCEEDED(buttonBResult) && buttonBState.isActive && buttonBState.currentState;
+        bool buttonBJustPressed = buttonBPressed && !prevButtonB_;
+        prevButtonB_ = buttonBPressed;
+        inputStarted |= buttonBJustPressed;
+
+        bool triggerJustPressed[2] = { false, false };
+        bool thumbstickClickJustPressed[2] = { false, false };
+        float thumbstickXValue[2] = { 0.0f, 0.0f };
+        bool thumbstickXHeld[2] = { false, false };
+        int thumbstickYJustDir[2] = { 0, 0 };
+        bool continuousInputActive = false;
+
         for (int hand = 0; hand < 2; ++hand) {
             XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
-            gi.action = triggerAction_;
             gi.subactionPath = subactionPaths_[hand];
+
+            gi.action = triggerAction_;
             XrActionStateFloat trigState{ XR_TYPE_ACTION_STATE_FLOAT };
             XrResult triggerResult = xrGetActionStateFloat(session_, &gi, &trigState);
             bool pressed = XR_SUCCEEDED(triggerResult) && trigState.isActive && trigState.currentState > 0.5f;
-            bool justPressed = pressed && !prevTrigger_[hand];
+            triggerJustPressed[hand] = pressed && !prevTrigger_[hand];
             prevTrigger_[hand] = pressed;
+            inputStarted |= triggerJustPressed[hand];
 
-            const auto& handHover = controllerRays[hand].hover;
-            if (justPressed && handHover.region != ControlPanel::Region_None) {
-                switch (handHover.region) {
-                    case ControlPanel::Region_Minus15:    DispatchSeekRelative(env, -15000); break;
-                    case ControlPanel::Region_Plus15:     DispatchSeekRelative(env,  15000); break;
-                    case ControlPanel::Region_PlayPause:  DispatchPlayPause(env); break;
-                    case ControlPanel::Region_Scrubber:   DispatchSeekFraction(env, handHover.scrubFraction); break;
-                    default: break;
+            gi.action = thumbstickClickAction_;
+            XrActionStateBoolean thumbClickState{ XR_TYPE_ACTION_STATE_BOOLEAN };
+            XrResult thumbClickResult = xrGetActionStateBoolean(session_, &gi, &thumbClickState);
+            bool thumbClickPressed = XR_SUCCEEDED(thumbClickResult) &&
+                                     thumbClickState.isActive &&
+                                     thumbClickState.currentState;
+            thumbstickClickJustPressed[hand] = thumbClickPressed && !prevThumbstickClick_[hand];
+            prevThumbstickClick_[hand] = thumbClickPressed;
+            inputStarted |= thumbstickClickJustPressed[hand];
+
+            gi.action = thumbstickXAction_;
+            XrActionStateFloat thumbXState{ XR_TYPE_ACTION_STATE_FLOAT };
+            XrResult thumbXResult = xrGetActionStateFloat(session_, &gi, &thumbXState);
+            int thumbXDir = (XR_SUCCEEDED(thumbXResult) && thumbXState.isActive)
+                                ? AxisDirection(thumbXState.currentState)
+                                : 0;
+            thumbstickXValue[hand] = thumbXDir != 0 ? thumbXState.currentState : 0.0f;
+            thumbstickXHeld[hand] = thumbXDir != 0;
+            bool thumbXJustStarted = thumbXDir != 0 && thumbXDir != prevThumbstickXDir_[hand];
+            prevThumbstickXDir_[hand] = thumbXDir;
+            inputStarted |= thumbXJustStarted;
+            continuousInputActive |= thumbstickXHeld[hand];
+
+            gi.action = thumbstickYAction_;
+            XrActionStateFloat thumbYState{ XR_TYPE_ACTION_STATE_FLOAT };
+            XrResult thumbYResult = xrGetActionStateFloat(session_, &gi, &thumbYState);
+            int thumbYDir = (XR_SUCCEEDED(thumbYResult) && thumbYState.isActive)
+                                ? AxisDirection(thumbYState.currentState)
+                                : 0;
+            thumbstickYJustDir[hand] =
+                (thumbYDir != 0 && thumbYDir != prevThumbstickYDir_[hand]) ? thumbYDir : 0;
+            prevThumbstickYDir_[hand] = thumbYDir;
+            inputStarted |= thumbstickYJustDir[hand] != 0;
+        }
+
+        double seekElapsedSeconds =
+            std::chrono::duration<double>(now - lastThumbstickSeekTime_).count();
+        lastThumbstickSeekTime_ = now;
+
+        if (inputStarted) {
+            panelLastInteractionTime_ = now;
+            if (!panelVisible_) {
+                panelVisible_ = true;
+                consumedForWake = true;
+            }
+        }
+        if (panelVisible_ && continuousInputActive) {
+            panelLastInteractionTime_ = now;
+        }
+
+        if (panelVisible_ && !inputStarted && now - panelLastInteractionTime_ >= kPanelAutoHideDelay) {
+            panelVisible_ = false;
+            hover_ = {};
+        }
+
+        if (panelVisible_ && !consumedForWake) {
+            if (buttonAJustPressed) {
+                DispatchPlayPause(env);
+            }
+            if (buttonBJustPressed) {
+                DispatchExit(env);
+            }
+
+            for (int hand = 0; hand < 2; ++hand) {
+                if (thumbstickClickJustPressed[hand]) {
+                    DispatchPlayPause(env);
+                }
+                if (thumbstickXHeld[hand] && seekElapsedSeconds > 0.0) {
+                    long long deltaMs = static_cast<long long>(
+                        double(thumbstickXValue[hand]) *
+                        kThumbstickSeekSpeedMsPerSecond *
+                        seekElapsedSeconds);
+                    if (deltaMs != 0) {
+                        DispatchSeekRelative(env, deltaMs);
+                    }
+                }
+                if (thumbstickYJustDir[hand] < 0) {
+                    panelVisible_ = false;
+                    hover_ = {};
+                }
+
+                const auto& handHover = controllerRays[hand].hover;
+                if (triggerJustPressed[hand] && handHover.region != ControlPanel::Region_None) {
+                    switch (handHover.region) {
+                        case ControlPanel::Region_Minus15:    DispatchSeekRelative(env, -15000); break;
+                        case ControlPanel::Region_Plus15:     DispatchSeekRelative(env,  15000); break;
+                        case ControlPanel::Region_PlayPause:  DispatchPlayPause(env); break;
+                        case ControlPanel::Region_Scrubber:   DispatchSeekFraction(env, handHover.scrubFraction); break;
+                        default: break;
+                    }
                 }
             }
         }
@@ -862,12 +1052,14 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
 
             glDepthMask(GL_TRUE);
 
-            panel_.Draw(panelProgram_, viewMat[0], viewMat[1], projMat[0], projMat[1], hover_);
+            if (panelVisible_) {
+                panel_.Draw(panelProgram_, viewMat[0], viewMat[1], projMat[0], projMat[1], hover_);
 
-            const float leftColor[4] = { 0.25f, 0.70f, 1.0f, 0.88f };
-            const float rightColor[4] = { 1.0f, 0.88f, 0.30f, 0.88f };
-            DrawControllerRay(controllerRays[0], viewMat[0], viewMat[1], projMat[0], projMat[1], leftColor);
-            DrawControllerRay(controllerRays[1], viewMat[0], viewMat[1], projMat[0], projMat[1], rightColor);
+                const float leftColor[4] = { 0.25f, 0.70f, 1.0f, 0.88f };
+                const float rightColor[4] = { 1.0f, 0.88f, 0.30f, 0.88f };
+                DrawControllerRay(controllerRays[0], viewMat[0], viewMat[1], projMat[0], projMat[1], leftColor);
+                DrawControllerRay(controllerRays[1], viewMat[0], viewMat[1], projMat[0], projMat[1], rightColor);
+            }
         }
 
         XrSwapchainImageReleaseInfo rli{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
@@ -914,6 +1106,13 @@ void OpenXRApp::DispatchSeekRelative(JNIEnv* env, long long deltaMs) {
 void OpenXRApp::DispatchSeekFraction(JNIEnv* env, float fraction) {
     if (callbackGlobal_ && midSeekFrac_) {
         env->CallVoidMethod(callbackGlobal_, midSeekFrac_, jfloat(fraction));
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    }
+}
+
+void OpenXRApp::DispatchExit(JNIEnv* env) {
+    if (callbackGlobal_ && midExit_) {
+        env->CallVoidMethod(callbackGlobal_, midExit_);
         if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
     }
 }
