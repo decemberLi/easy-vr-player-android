@@ -67,6 +67,20 @@ private:
     void DispatchPlayPause(JNIEnv* env);
     void DispatchSeekRelative(JNIEnv* env, long long deltaMs);
     void DispatchSeekFraction(JNIEnv* env, float fraction);
+    bool CreatePointerResources();
+    void DestroyPointerResources();
+
+    struct ControllerRay {
+        bool valid = false;
+        float origin[3] = {};
+        float direction[3] = {};
+        ControlPanel::HitResult hover{};
+    };
+    bool LocateControllerRay(int hand, XrTime displayTime, ControllerRay& ray);
+    void DrawControllerRay(const ControllerRay& ray,
+                           const gl::Mat4& view0, const gl::Mat4& view1,
+                           const gl::Mat4& proj0, const gl::Mat4& proj1,
+                           const float color[4]);
 
 private:
     JavaVM* jvm_ = nullptr;
@@ -121,13 +135,16 @@ private:
     // GL resources
     GLuint videoProgram_ = 0;
     GLuint panelProgram_ = 0;
+    GLuint pointerProgram_ = 0;
+    GLuint pointerVao_ = 0;
+    GLuint pointerVbo_ = 0;
     VrSphereMesh mesh_;
     ControlPanel panel_;
     VideoTexture videoTex_;
     MultiviewFramebuffer fbo_;
 
     // UI hover/trigger latch
-    bool prevTrigger_ = false;
+    bool prevTrigger_[2] = { false, false };
     ControlPanel::HitResult hover_{};
 };
 

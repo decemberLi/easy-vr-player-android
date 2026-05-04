@@ -185,4 +185,32 @@ void main() {
 }
 )glsl";
 
+inline constexpr const char* kPointerVert = R"glsl(#version 320 es
+#extension GL_OVR_multiview2 : require
+layout(num_views = 2) in;
+
+layout(location = 0) in vec3 a_position;
+
+uniform mat4 u_view[2];
+uniform mat4 u_proj[2];
+
+void main() {
+    gl_Position = u_proj[gl_ViewID_OVR] * u_view[gl_ViewID_OVR] * vec4(a_position, 1.0);
+}
+)glsl";
+
+inline constexpr const char* kPointerFrag = R"glsl(#version 320 es
+#extension GL_OVR_multiview2 : require
+
+precision mediump float;
+
+uniform vec4 u_color;
+
+out vec4 fragColor;
+
+void main() {
+    fragColor = u_color;
+}
+)glsl";
+
 }  // namespace vrp::shaders

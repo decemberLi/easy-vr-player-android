@@ -121,6 +121,7 @@ ControlPanel::HitResult ControlPanel::HitTestRay(float ox, float oy, float oz,
 
     r.u = (localX + halfW) / width_;
     r.v = (localY + halfH) / height_;
+    r.rayDistance = t;
     if (r.u < 0.15f) {
         r.region = Region_Minus15;
     } else if (r.u < 0.30f) {
@@ -132,30 +133,6 @@ ControlPanel::HitResult ControlPanel::HitTestRay(float ox, float oy, float oz,
         r.scrubFraction = (r.u - 0.50f) / 0.50f;
     }
     return r;
-}
-
-ControlPanel::HitResult ControlPanel::HitTestGaze(const gl::Mat4& headView) const {
-    // Compose head world transform from the inverse of the view matrix.
-    // headView transforms world -> head; so to get the head pose in the world,
-    // we invert. For a rigid view matrix, R_inv = transpose(R) and t_inv = -R^T t.
-    const float* m = headView.m;
-    float rx0 = m[0], rx1 = m[4], rx2 = m[8];
-    float ry0 = m[1], ry1 = m[5], ry2 = m[9];
-    float rz0 = m[2], rz1 = m[6], rz2 = m[10];
-    float tx = m[12], ty = m[13], tz = m[14];
-
-    // World-space head position = -R^T * t.
-    float ox = -(rx0 * tx + ry0 * ty + rz0 * tz);
-    float oy = -(rx1 * tx + ry1 * ty + rz1 * tz);
-    float oz = -(rx2 * tx + ry2 * ty + rz2 * tz);
-    // Forward in head-space is (0,0,-1); transform back into world via R^T.
-    float fx = -rz0;
-    float fy = -rz1;
-    float fz = -rz2;
-    float len = std::sqrt(fx * fx + fy * fy + fz * fz);
-    if (len > 0.0f) { fx /= len; fy /= len; fz /= len; }
-
-    return HitTestRay(ox, oy, oz, fx, fy, fz);
 }
 
 }  // namespace vrp

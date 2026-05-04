@@ -4,6 +4,7 @@
 #include <EGL/eglext.h>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <thread>
 
@@ -60,6 +61,46 @@ JNIEnv* AttachThread(JavaVM* jvm) {
     JavaVMAttachArgs args{ JNI_VERSION_1_6, "vrp-render", nullptr };
     if (jvm->AttachCurrentThread(&env, &args) != JNI_OK) return nullptr;
     return env;
+}
+
+bool IsInstanceExtensionAvailable(const char* name) {
+    uint32_t count = 0;
+    XrResult countResult = xrEnumerateInstanceExtensionProperties(nullptr, 0, &count, nullptr);
+    if (XR_FAILED(countResult) || count == 0) return false;
+
+    std::vector<XrExtensionProperties> extensions(count, { XR_TYPE_EXTENSION_PROPERTIES });
+    XrResult enumResult = xrEnumerateInstanceExtensionProperties(nullptr, count, &count, extensions.data());
+    if (XR_FAILED(enumResult)) return false;
+
+    for (const auto& extension : extensions) {
+        if (std::strcmp(extension.extensionName, name) == 0) return true;
+    }
+    return false;
+}
+
+bool Normalize3(float& x, float& y, float& z) {
+    float len = std::sqrt(x * x + y * y + z * z);
+    if (len <= 1e-5f) return false;
+    x /= len;
+    y /= len;
+    z /= len;
+    return true;
+}
+
+void RotateVectorByQuat(const XrQuaternionf& q,
+                        float vx, float vy, float vz,
+                        float& ox, float& oy, float& oz) {
+    float uvx = q.y * vz - q.z * vy;
+    float uvy = q.z * vx - q.x * vz;
+    float uvz = q.x * vy - q.y * vx;
+
+    float uuvx = q.y * uvz - q.z * uvy;
+    float uuvy = q.z * uvx - q.x * uvz;
+    float uuvz = q.x * uvy - q.y * uvx;
+
+    ox = vx + 2.0f * (q.w * uvx + uuvx);
+    oy = vy + 2.0f * (q.w * uvy + uuvy);
+    oz = vz + 2.0f * (q.w * uvz + uuvz);
 }
 
 }  // namespace
@@ -263,10 +304,14 @@ void OpenXRApp::RenderThreadMain() {
 // XR
 
 bool OpenXRApp::CreateXrInstance(JNIEnv* env, jobject activity) {
-    const char* extensions[] = {
+    std::vector<const char*> extensions = {
         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
         XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
     };
+    if (IsInstanceExtensionAvailable(XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME)) {
+        extensions.push_back(XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME);
+        LOGI("enabled optional extension %s", XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME);
+    }
 
     XrInstanceCreateInfoAndroidKHR androidInfo{ XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR };
     androidInfo.applicationVM = jvm_;
@@ -282,8 +327,8 @@ bool OpenXRApp::CreateXrInstance(JNIEnv* env, jobject activity) {
     XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
     ci.next = &androidInfo;
     ci.applicationInfo = appInfo;
-    ci.enabledExtensionCount = sizeof(extensions) / sizeof(extensions[0]);
-    ci.enabledExtensionNames = extensions;
+    ci.enabledExtensionCount = uint32_t(extensions.size());
+    ci.enabledExtensionNames = extensions.data();
 
     XR_OK(xrCreateInstance(&ci, &instance_));
     LOGI("xrCreateInstance ok instance=%p", instance_);
@@ -456,9 +501,6 @@ bool OpenXRApp::InitGlResources() {
         XR_OK(xrCreateAction(actionSet_, &aci, &aimPoseAction_));
     }
 
-    XrPath profileTouch = XR_NULL_PATH;
-    XR_OK(xrStringToPath(instance_, "/interaction_profiles/oculus/touch_controller", &profileTouch));
-
     XrPath leftTrig, rightTrig, leftAim, rightAim;
     XR_OK(xrStringToPath(instance_, "/user/hand/left/input/trigger/value", &leftTrig));
     XR_OK(xrStringToPath(instance_, "/user/hand/right/input/trigger/value", &rightTrig));
@@ -471,11 +513,33 @@ bool OpenXRApp::InitGlResources() {
         { aimPoseAction_, leftAim },
         { aimPoseAction_, rightAim },
     }};
-    XrInteractionProfileSuggestedBinding ipsb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-    ipsb.interactionProfile = profileTouch;
-    ipsb.countSuggestedBindings = uint32_t(suggested.size());
-    ipsb.suggestedBindings = suggested.data();
-    XR_OK(xrSuggestInteractionProfileBindings(instance_, &ipsb));
+    auto suggestBindings = [&](const char* profilePath) -> bool {
+        XrPath profile = XR_NULL_PATH;
+        XrResult pathResult = xrStringToPath(instance_, profilePath, &profile);
+        if (XR_FAILED(pathResult)) {
+            LOGW("controller profile path unsupported: %s result=%d", profilePath, pathResult);
+            return false;
+        }
+        XrInteractionProfileSuggestedBinding ipsb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+        ipsb.interactionProfile = profile;
+        ipsb.countSuggestedBindings = uint32_t(suggested.size());
+        ipsb.suggestedBindings = suggested.data();
+        XrResult suggestResult = xrSuggestInteractionProfileBindings(instance_, &ipsb);
+        if (XR_FAILED(suggestResult)) {
+            LOGW("controller binding suggestion failed: %s result=%d", profilePath, suggestResult);
+            return false;
+        }
+        LOGI("controller bindings suggested for %s", profilePath);
+        return true;
+    };
+
+    bool suggestedAny = false;
+    suggestedAny |= suggestBindings("/interaction_profiles/meta/touch_plus_controller");
+    suggestedAny |= suggestBindings("/interaction_profiles/oculus/touch_controller");
+    if (!suggestedAny) {
+        LOGE("failed to suggest bindings for any Touch controller profile");
+        return false;
+    }
 
     {
         XrSessionActionSetsAttachInfo ai{ XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
@@ -495,10 +559,12 @@ bool OpenXRApp::InitGlResources() {
     // GL resources.
     videoProgram_ = gl::LinkProgram(shaders::kVideoVert, shaders::kVideoFrag);
     panelProgram_ = gl::LinkProgram(shaders::kPanelVert, shaders::kPanelFrag);
-    if (!videoProgram_ || !panelProgram_) return false;
+    pointerProgram_ = gl::LinkProgram(shaders::kPointerVert, shaders::kPointerFrag);
+    if (!videoProgram_ || !panelProgram_ || !pointerProgram_) return false;
 
     mesh_.Create(2.0f, 180.0f, 180.0f);
     panel_.Create();
+    if (!CreatePointerResources()) return false;
     videoTex_.CreateTexture();
     fbo_.Create(swapchainWidth_, swapchainHeight_);
     textureReady_ = true;
@@ -511,10 +577,112 @@ void OpenXRApp::DestroyGlResources() {
     if (env) videoTex_.ClearSurfaceTexture(env);
     fbo_.Destroy();
     videoTex_.Destroy();
+    DestroyPointerResources();
     panel_.Destroy();
     mesh_.Destroy();
+    if (pointerProgram_) { glDeleteProgram(pointerProgram_); pointerProgram_ = 0; }
     if (panelProgram_) { glDeleteProgram(panelProgram_); panelProgram_ = 0; }
     if (videoProgram_) { glDeleteProgram(videoProgram_); videoProgram_ = 0; }
+}
+
+bool OpenXRApp::CreatePointerResources() {
+    glGenVertexArrays(1, &pointerVao_);
+    glBindVertexArray(pointerVao_);
+
+    glGenBuffers(1, &pointerVbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, pointerVbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6, nullptr, GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, nullptr);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    return pointerVao_ != 0 && pointerVbo_ != 0;
+}
+
+void OpenXRApp::DestroyPointerResources() {
+    if (pointerVbo_) { glDeleteBuffers(1, &pointerVbo_); pointerVbo_ = 0; }
+    if (pointerVao_) { glDeleteVertexArrays(1, &pointerVao_); pointerVao_ = 0; }
+}
+
+bool OpenXRApp::LocateControllerRay(int hand, XrTime displayTime, ControllerRay& ray) {
+    ray = {};
+    if (hand < 0 || hand >= 2 || aimSpace_[hand] == XR_NULL_HANDLE) return false;
+
+    XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
+    XrResult result = xrLocateSpace(aimSpace_[hand], localSpace_, displayTime, &location);
+    if (XR_FAILED(result)) return false;
+
+    constexpr XrSpaceLocationFlags kRequiredFlags =
+        XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    if ((location.locationFlags & kRequiredFlags) != kRequiredFlags) return false;
+
+    const XrPosef& pose = location.pose;
+    ray.origin[0] = pose.position.x;
+    ray.origin[1] = pose.position.y;
+    ray.origin[2] = pose.position.z;
+
+    RotateVectorByQuat(pose.orientation, 0.0f, 0.0f, -1.0f,
+                       ray.direction[0], ray.direction[1], ray.direction[2]);
+    if (!Normalize3(ray.direction[0], ray.direction[1], ray.direction[2])) return false;
+
+    ray.hover = panel_.HitTestRay(ray.origin[0], ray.origin[1], ray.origin[2],
+                                  ray.direction[0], ray.direction[1], ray.direction[2]);
+    ray.valid = true;
+    return true;
+}
+
+void OpenXRApp::DrawControllerRay(const ControllerRay& ray,
+                                  const gl::Mat4& view0, const gl::Mat4& view1,
+                                  const gl::Mat4& proj0, const gl::Mat4& proj1,
+                                  const float color[4]) {
+    if (!ray.valid || !pointerProgram_ || !pointerVao_ || !pointerVbo_) return;
+
+    constexpr float kDefaultRayMeters = 2.5f;
+    bool hitPanel = ray.hover.u >= 0.0f && ray.hover.v >= 0.0f && ray.hover.rayDistance > 0.0f;
+    float length = hitPanel ? ray.hover.rayDistance : kDefaultRayMeters;
+    float verts[6] = {
+        ray.origin[0],
+        ray.origin[1],
+        ray.origin[2],
+        ray.origin[0] + ray.direction[0] * length,
+        ray.origin[1] + ray.direction[1] * length,
+        ray.origin[2] + ray.direction[2] * length,
+    };
+
+    glUseProgram(pointerProgram_);
+
+    GLint locView = glGetUniformLocation(pointerProgram_, "u_view");
+    GLint locProj = glGetUniformLocation(pointerProgram_, "u_proj");
+    GLint locColor = glGetUniformLocation(pointerProgram_, "u_color");
+
+    float views[32];
+    std::memcpy(views,      view0.m, sizeof(view0.m));
+    std::memcpy(views + 16, view1.m, sizeof(view1.m));
+    glUniformMatrix4fv(locView, 2, GL_FALSE, views);
+
+    float projs[32];
+    std::memcpy(projs,      proj0.m, sizeof(proj0.m));
+    std::memcpy(projs + 16, proj1.m, sizeof(proj1.m));
+    glUniformMatrix4fv(locProj, 2, GL_FALSE, projs);
+    glUniform4fv(locColor, 1, color);
+
+    glBindVertexArray(pointerVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, pointerVbo_);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+    glLineWidth(3.0f);
+    glDrawArrays(GL_LINES, 0, 2);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
 }
 
 void OpenXRApp::HandleEvents() {
@@ -599,8 +767,6 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
                                           p.position.x, p.position.y, p.position.z);
             projMat[i] = gl::ProjectionFromXrFov(f.angleLeft, f.angleRight, f.angleUp, f.angleDown, 0.1f, 100.0f);
         }
-        // Use the average head pose for gaze hit-testing.
-        gl::Mat4 headView = viewMat[0];
 
         // Pull next video frame, if any.
         videoTex_.UpdateIfNeeded(env);
@@ -612,24 +778,42 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
         panel_.SetIsPlaying(isPlaying_.load());
         panel_.SetIsLoading(isLoading_.load());
         panel_.SetProgress(progress);
-        hover_ = panel_.HitTestGaze(headView);
+
+        // Quest Touch controllers are the only control source. Head gaze is
+        // intentionally not used, so no fixed eye-centered cursor can activate UI.
+        ControllerRay controllerRays[2];
+        for (int hand = 0; hand < 2; ++hand) {
+            LocateControllerRay(hand, frameState.predictedDisplayTime, controllerRays[hand]);
+        }
+
+        hover_ = {};
+        for (int hand = 1; hand >= 0; --hand) {
+            if (controllerRays[hand].hover.u >= 0.0f && controllerRays[hand].hover.v >= 0.0f) {
+                hover_ = controllerRays[hand].hover;
+                break;
+            }
+        }
 
         // Trigger latching.
-        XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
-        gi.action = triggerAction_;
-        gi.subactionPath = XR_NULL_PATH;
-        XrActionStateFloat trigState{ XR_TYPE_ACTION_STATE_FLOAT };
-        XR_TRY(xrGetActionStateFloat(session_, &gi, &trigState));
-        bool pressed = trigState.isActive && trigState.currentState > 0.5f;
-        bool justPressed = pressed && !prevTrigger_;
-        prevTrigger_ = pressed;
-        if (justPressed && hover_.region != ControlPanel::Region_None) {
-            switch (hover_.region) {
-                case ControlPanel::Region_Minus15:    DispatchSeekRelative(env, -15000); break;
-                case ControlPanel::Region_Plus15:     DispatchSeekRelative(env,  15000); break;
-                case ControlPanel::Region_PlayPause:  DispatchPlayPause(env); break;
-                case ControlPanel::Region_Scrubber:   DispatchSeekFraction(env, hover_.scrubFraction); break;
-                default: break;
+        for (int hand = 0; hand < 2; ++hand) {
+            XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
+            gi.action = triggerAction_;
+            gi.subactionPath = subactionPaths_[hand];
+            XrActionStateFloat trigState{ XR_TYPE_ACTION_STATE_FLOAT };
+            XrResult triggerResult = xrGetActionStateFloat(session_, &gi, &trigState);
+            bool pressed = XR_SUCCEEDED(triggerResult) && trigState.isActive && trigState.currentState > 0.5f;
+            bool justPressed = pressed && !prevTrigger_[hand];
+            prevTrigger_[hand] = pressed;
+
+            const auto& handHover = controllerRays[hand].hover;
+            if (justPressed && handHover.region != ControlPanel::Region_None) {
+                switch (handHover.region) {
+                    case ControlPanel::Region_Minus15:    DispatchSeekRelative(env, -15000); break;
+                    case ControlPanel::Region_Plus15:     DispatchSeekRelative(env,  15000); break;
+                    case ControlPanel::Region_PlayPause:  DispatchPlayPause(env); break;
+                    case ControlPanel::Region_Scrubber:   DispatchSeekFraction(env, handHover.scrubFraction); break;
+                    default: break;
+                }
             }
         }
 
@@ -679,6 +863,11 @@ void OpenXRApp::RenderFrame(JNIEnv* env) {
             glDepthMask(GL_TRUE);
 
             panel_.Draw(panelProgram_, viewMat[0], viewMat[1], projMat[0], projMat[1], hover_);
+
+            const float leftColor[4] = { 0.25f, 0.70f, 1.0f, 0.88f };
+            const float rightColor[4] = { 1.0f, 0.88f, 0.30f, 0.88f };
+            DrawControllerRay(controllerRays[0], viewMat[0], viewMat[1], projMat[0], projMat[1], leftColor);
+            DrawControllerRay(controllerRays[1], viewMat[0], viewMat[1], projMat[0], projMat[1], rightColor);
         }
 
         XrSwapchainImageReleaseInfo rli{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };

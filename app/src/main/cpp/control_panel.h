@@ -27,6 +27,7 @@ public:
         HitRegion region = Region_None;
         float u = -1.0f;        // panel UV x
         float v = -1.0f;        // panel UV y
+        float rayDistance = 0.0f; // meters from ray origin to panel plane
         float scrubFraction = 0.0f;  // valid when region == Region_Scrubber
     };
 
@@ -50,9 +51,6 @@ public:
      */
     HitResult HitTestRay(float ox, float oy, float oz,
                          float dx, float dy, float dz) const;
-
-    /** Convenience: hit-test using head pose forward as the gaze ray. */
-    HitResult HitTestGaze(const gl::Mat4& headView) const;
 
     void SetIsPlaying(bool playing) { isPlaying_ = playing; }
     void SetIsLoading(bool loading) { isLoading_ = loading; }
