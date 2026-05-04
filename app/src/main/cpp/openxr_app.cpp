@@ -2,6 +2,7 @@
 #include "shaders.h"
 
 #include <EGL/eglext.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -37,6 +38,21 @@ PFN_xrInitializeLoaderKHR pfnXrInitializeLoaderKHR = nullptr;
 constexpr auto kPanelAutoHideDelay = std::chrono::seconds(3);
 constexpr float kThumbstickPressThreshold = 0.65f;
 constexpr double kThumbstickSeekSpeedMsPerSecond = 20000.0;
+constexpr float kEyeBufferScale = 1.25f;
+constexpr int kTargetMsaaSamples = 4;
+
+int ScaleSwapchainDimension(uint32_t recommended, uint32_t maxValue) {
+    int scaled = std::max(1, int(std::lround(float(recommended) * kEyeBufferScale)));
+    if (maxValue > 0) scaled = std::min(scaled, int(maxValue));
+    return scaled;
+}
+
+int ChooseFramebufferSamples() {
+    GLint maxSamples = 1;
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    if (maxSamples < 2) return 1;
+    return std::min(kTargetMsaaSamples, int(maxSamples));
+}
 
 bool EnsureLoaderInitialized(JavaVM* jvm, jobject appContext) {
     if (pfnXrInitializeLoaderKHR) return true;
@@ -363,8 +379,13 @@ bool OpenXRApp::InitXr(JNIEnv* env) {
     for (auto& v : viewConfigs_) v = { XR_TYPE_VIEW_CONFIGURATION_VIEW };
     XR_OK(xrEnumerateViewConfigurationViews(
         instance_, systemId_, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &viewCount, viewConfigs_));
-    LOGI("eye recommended=%dx%d", viewConfigs_[0].recommendedImageRectWidth,
-         viewConfigs_[0].recommendedImageRectHeight);
+    LOGI("eye recommended=%dx%d max=%dx%d samples recommended=%u max=%u",
+         viewConfigs_[0].recommendedImageRectWidth,
+         viewConfigs_[0].recommendedImageRectHeight,
+         viewConfigs_[0].maxImageRectWidth,
+         viewConfigs_[0].maxImageRectHeight,
+         viewConfigs_[0].recommendedSwapchainSampleCount,
+         viewConfigs_[0].maxSwapchainSampleCount);
 
     return true;
 }
@@ -459,9 +480,13 @@ bool OpenXRApp::InitGlResources() {
     rsci.poseInReferenceSpace.position = { 0, 0, 0 };
     XR_OK(xrCreateReferenceSpace(session_, &rsci, &localSpace_));
 
-    // Swapchain — single multiview swapchain with 2 array layers.
-    swapchainWidth_  = int(viewConfigs_[0].recommendedImageRectWidth);
-    swapchainHeight_ = int(viewConfigs_[0].recommendedImageRectHeight);
+    // Swapchain — single multiview swapchain with 2 array layers. The OpenXR
+    // swapchain remains single-sample; MSAA is resolved into it by the FBO when
+    // GL_OVR_multiview_multisampled_render_to_texture is available.
+    swapchainWidth_  = ScaleSwapchainDimension(viewConfigs_[0].recommendedImageRectWidth,
+                                               viewConfigs_[0].maxImageRectWidth);
+    swapchainHeight_ = ScaleSwapchainDimension(viewConfigs_[0].recommendedImageRectHeight,
+                                               viewConfigs_[0].maxImageRectHeight);
 
     XrSwapchainCreateInfo scci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
     scci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
@@ -480,7 +505,8 @@ bool OpenXRApp::InitGlResources() {
     XR_OK(xrEnumerateSwapchainImages(
         swapchain_, imgCount, &imgCount,
         reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages_.data())));
-    LOGI("swapchain %dx%d images=%u", swapchainWidth_, swapchainHeight_, imgCount);
+    LOGI("swapchain %dx%d images=%u renderScale=%.2f",
+         swapchainWidth_, swapchainHeight_, imgCount, kEyeBufferScale);
 
     // Actions: trigger (float) + aim pose, on left/right hand.
     XrActionSetCreateInfo asci{ XR_TYPE_ACTION_SET_CREATE_INFO };
@@ -643,7 +669,7 @@ bool OpenXRApp::InitGlResources() {
     panelLastInteractionTime_ = std::chrono::steady_clock::now();
     lastThumbstickSeekTime_ = panelLastInteractionTime_;
     videoTex_.CreateTexture();
-    fbo_.Create(swapchainWidth_, swapchainHeight_);
+    fbo_.Create(swapchainWidth_, swapchainHeight_, ChooseFramebufferSamples());
     textureReady_ = true;
 
     return true;

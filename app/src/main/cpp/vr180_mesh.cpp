@@ -8,6 +8,7 @@ namespace vrp {
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
+constexpr float kDegreesPerSlice = 1.0f;
 }
 
 void VrSphereMesh::Create(float radius, float horizontalFovDeg, float verticalFovDeg) {
@@ -15,8 +16,8 @@ void VrSphereMesh::Create(float radius, float horizontalFovDeg, float verticalFo
 
     float clipHFov = std::clamp(horizontalFovDeg, 0.0f, 360.0f);
     float clipVFov = std::clamp(verticalFovDeg,  0.0f, 180.0f);
-    int verticalSlices   = std::max(1, int(clipHFov / 3.0f)); // ~3° per slice → 60 around
-    int horizontalSlices = std::max(1, int(clipVFov / 3.0f));
+    int verticalSlices   = std::max(1, int(std::ceil(clipHFov / kDegreesPerSlice)));
+    int horizontalSlices = std::max(1, int(std::ceil(clipVFov / kDegreesPerSlice)));
 
     float verticalScale  = clipVFov / 180.0f;
     float verticalOffset = (1.0f - verticalScale) / 2.0f;

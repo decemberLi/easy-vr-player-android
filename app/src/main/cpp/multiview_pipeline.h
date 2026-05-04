@@ -18,7 +18,7 @@ public:
     MultiviewFramebuffer() = default;
     ~MultiviewFramebuffer() { Destroy(); }
 
-    bool Create(int width, int height);
+    bool Create(int width, int height, int requestedSamples = 1);
     void Destroy();
 
     bool Bind(GLuint colorTextureArray);
@@ -29,6 +29,7 @@ public:
 private:
     int width_ = 0;
     int height_ = 0;
+    int samples_ = 1;
     GLuint fbo_ = 0;
     GLuint depthTex_ = 0;
 };

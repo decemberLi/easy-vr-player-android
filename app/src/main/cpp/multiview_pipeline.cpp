@@ -1,6 +1,7 @@
 #include "multiview_pipeline.h"
 
 #include <EGL/egl.h>
+#include <algorithm>
 
 #ifndef GL_FRAMEBUFFER
 #define GL_FRAMEBUFFER 0x8D40
@@ -12,24 +13,38 @@ namespace {
 typedef void (GL_APIENTRYP PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(
     GLenum target, GLenum attachment, GLuint texture, GLint level,
     GLint baseViewIndex, GLsizei numViews);
+typedef void (GL_APIENTRYP PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC)(
+    GLenum target, GLenum attachment, GLuint texture, GLint level,
+    GLsizei samples, GLint baseViewIndex, GLsizei numViews);
 
 PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC pglFramebufferTextureMultiviewOVR = nullptr;
+PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC
+    pglFramebufferTextureMultisampleMultiviewOVR = nullptr;
 
 void EnsureLoaded() {
     if (pglFramebufferTextureMultiviewOVR) return;
     pglFramebufferTextureMultiviewOVR = reinterpret_cast<PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC>(
         eglGetProcAddress("glFramebufferTextureMultiviewOVR"));
+    pglFramebufferTextureMultisampleMultiviewOVR =
+        reinterpret_cast<PFNGLFRAMEBUFFERTEXTUREMULTISAMPLEMULTIVIEWOVRPROC>(
+            eglGetProcAddress("glFramebufferTextureMultisampleMultiviewOVR"));
     if (!pglFramebufferTextureMultiviewOVR) {
         LOGE("glFramebufferTextureMultiviewOVR not available — multiview rendering will fail");
     }
 }
 }  // namespace
 
-bool MultiviewFramebuffer::Create(int width, int height) {
+bool MultiviewFramebuffer::Create(int width, int height, int requestedSamples) {
     Destroy();
     EnsureLoaded();
     width_ = width;
     height_ = height;
+    samples_ = 1;
+    if (requestedSamples > 1 && pglFramebufferTextureMultisampleMultiviewOVR) {
+        samples_ = std::max(1, requestedSamples);
+    } else if (requestedSamples > 1) {
+        LOGW("multiview MSAA extension unavailable; falling back to single-sample rendering");
+    }
 
     glGenTextures(1, &depthTex_);
     glBindTexture(GL_TEXTURE_2D_ARRAY, depthTex_);
@@ -39,6 +54,7 @@ bool MultiviewFramebuffer::Create(int width, int height) {
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
     glGenFramebuffers(1, &fbo_);
+    LOGI("MultiviewFramebuffer %dx%d samples=%d", width_, height_, samples_);
     return fbo_ != 0;
 }
 
@@ -46,16 +62,24 @@ void MultiviewFramebuffer::Destroy() {
     if (fbo_)      { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
     if (depthTex_) { glDeleteTextures(1, &depthTex_); depthTex_ = 0; }
     width_ = height_ = 0;
+    samples_ = 1;
 }
 
 bool MultiviewFramebuffer::Bind(GLuint colorTextureArray) {
     if (!fbo_ || !pglFramebufferTextureMultiviewOVR) return false;
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    pglFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                       colorTextureArray, 0, 0, 2);
-    pglFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                       depthTex_, 0, 0, 2);
+    if (samples_ > 1 && pglFramebufferTextureMultisampleMultiviewOVR) {
+        pglFramebufferTextureMultisampleMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                                     colorTextureArray, 0, samples_, 0, 2);
+        pglFramebufferTextureMultisampleMultiviewOVR(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                                     depthTex_, 0, samples_, 0, 2);
+    } else {
+        pglFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                          colorTextureArray, 0, 0, 2);
+        pglFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                          depthTex_, 0, 0, 2);
+    }
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         LOGE("multiview FBO incomplete: 0x%x", status);

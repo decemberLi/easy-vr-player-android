@@ -31,7 +31,7 @@ inline constexpr const char* kVideoFrag = R"glsl(#version 320 es
 #extension GL_OVR_multiview2 : require
 #extension GL_OES_EGL_image_external_essl3 : require
 
-precision mediump float;
+precision highp float;
 in highp vec2 v_uv;
 
 uniform samplerExternalOES u_videoTex;
