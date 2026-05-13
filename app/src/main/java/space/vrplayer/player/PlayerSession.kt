@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -82,7 +83,17 @@ class PlayerSession(context: Context) {
     fun load(uri: Uri) {
         Log.i(TAG, "load uri=$uri")
         _hasReachedEnd.value = false
-        val item = MediaItem.fromUri(uri)
+        val urlString = uri.toString()
+        val mimeType = if (urlString.contains("m3u8", ignoreCase = true)) {
+            MimeTypes.APPLICATION_M3U8
+        } else {
+            null
+        }
+        val item = if (mimeType != null) {
+            MediaItem.Builder().setUri(uri).setMimeType(mimeType).build()
+        } else {
+            MediaItem.fromUri(uri)
+        }
         player.setMediaItem(item)
         player.prepare()
     }
