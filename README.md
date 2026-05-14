@@ -2,6 +2,8 @@
 
 Meta Quest 3 原生 VR 播放器。支持本地视频（SAF 选择器）、115 网盘（OAuth 登录 + 多清晰度 + 原画走本地 HTTP 代理边下边播）、VR180 半球 SBS 立体投影，沉浸空间内含播放/暂停 / ±15s / 进度条控制面板。
 
+> 本项目的 iOS / visionOS 版本见：[decemberLi/pan_player](https://github.com/decemberLi/pan_player)（SwiftUI + RealityKit + KSPlayer）。两个仓库共用相同的 115 OAuth 协议、本地代理语义和 VR180 网格算法，可互为参考实现。
+
 ## 平台与依赖
 
 - 设备：Meta Quest 3 / Quest 3S / Quest Pro（Horizon OS）
